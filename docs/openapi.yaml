@@ -1,0 +1,387 @@
+openapi: 3.0.3
+info:
+  title: HDRBridge API
+  version: 1.0.0
+  description: |
+    相册和图片管理接口。JSON 请求体上限为 16 KiB, 拒绝未知字段和尾随 JSON; 更新字段不接受 null。
+    普通错误返回 Error; 上传处理过程中也可能返回包含已接收图片的 UploadResult。
+servers:
+  - url: /api
+tags:
+  - name: 相册
+  - name: 图片
+paths:
+  /albums:
+    get:
+      tags: [相册]
+      summary: 列出相册
+      description: 未分类相册固定在首位, 其他相册按创建时间和 ID 升序排列
+      responses:
+        '200':
+          description: 相册数组
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Album' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    post:
+      tags: [相册]
+      summary: 创建相册
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateAlbum' }
+      responses:
+        '201': { $ref: '#/components/responses/Album' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /albums/{id}:
+    parameters:
+      - $ref: '#/components/parameters/AlbumID'
+    get:
+      tags: [相册]
+      summary: 获取相册
+      responses:
+        '200': { $ref: '#/components/responses/Album' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    patch:
+      tags: [相册]
+      summary: 修改相册
+      description: 至少提供一个字段, 空描述可清空原描述, 内置相册不可修改
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateAlbum' }
+      responses:
+        '200': { $ref: '#/components/responses/Album' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    delete:
+      tags: [相册]
+      summary: 删除相册
+      description: 默认将图片移入未分类。选择同时删除图片时, 元数据删除提交后返回, 文件由后台清理并重试失败项
+      parameters:
+        - name: delete_images
+          in: query
+          description: 只接受单个 true 或 false, 不接受其他查询参数
+          schema: { type: boolean, default: false }
+      responses:
+        '204': { description: 已删除 }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /albums/{id}/images:
+    parameters:
+      - $ref: '#/components/parameters/AlbumID'
+    get:
+      tags: [图片]
+      summary: 分页列出相册图片
+      description: |
+        按创建时间和 ID 降序排列。total 是相册图片总数, matched 是当前搜索的匹配数量。
+        游标用于相同搜索条件下的下一页, 图片新增、移动或删除可能影响分页结果。
+      parameters:
+        - $ref: '#/components/parameters/ImageSearch'
+        - $ref: '#/components/parameters/ImagePageLimit'
+        - $ref: '#/components/parameters/ImageCursor'
+      responses:
+        '200':
+          description: 图片分页和数量
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ImagePage' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    post:
+      tags: [图片]
+      summary: 上传图片
+      description: |
+        重复使用 files 或 file 字段上传, 最多 100 个部分。支持 JXR、JPEG、PNG、GIF、WebP、AVIF、BMP、ICO、SVG、TIFF、HEIC / HEIF 和 JPEG XL。文件扩展名须与识别出的格式匹配。
+        同一请求逐张处理。JXR 在请求内转为 HEIC 后才写入相册, 上传成功即可下载。转换失败可重新上传该文件。
+        按源文件的 SHA-256 在整个资料库查重。校验和相同的文件返回逐文件错误 409「图片已存在」。
+        至少一个文件保存成功时返回 201。全部失败时使用首个文件的错误状态, 空批次返回 400。
+        multipart 损坏或请求超限时返回 400 或 413, 响应仍包含此前已保存的图片。
+        进入 multipart 处理前的请求错误返回普通 Error。
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                files:
+                  type: array
+                  items: { type: string, format: binary }
+                file:
+                  type: array
+                  items: { type: string, format: binary }
+      responses:
+        '201': { $ref: '#/components/responses/UploadResult' }
+        '400': { $ref: '#/components/responses/UploadError' }
+        '404': { $ref: '#/components/responses/UploadError' }
+        '409': { $ref: '#/components/responses/UploadError' }
+        '413': { $ref: '#/components/responses/UploadError' }
+        '500': { $ref: '#/components/responses/UploadError' }
+  /images:
+    get:
+      tags: [图片]
+      summary: 分页列出资料库中的全部图片
+      description: |
+        包括未分类和所有相册的图片, 按创建时间和 ID 降序排列。total 是全库图片总数, matched 是当前搜索的匹配数量。
+        游标用于相同搜索条件下的下一页, 图片新增或删除可能影响分页结果。
+      parameters:
+        - $ref: '#/components/parameters/ImageSearch'
+        - $ref: '#/components/parameters/ImagePageLimit'
+        - $ref: '#/components/parameters/ImageCursor'
+      responses:
+        '200':
+          description: 图片分页和数量
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ImagePage' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /images/{id}:
+    parameters:
+      - $ref: '#/components/parameters/ImageID'
+    get:
+      tags: [图片]
+      summary: 获取图片元数据
+      responses:
+        '200': { $ref: '#/components/responses/Image' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    patch:
+      tags: [图片]
+      summary: 移动图片到指定相册
+      description: 仅更新图片的相册归属
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [album_id]
+              additionalProperties: false
+              properties:
+                album_id: { type: string, minLength: 1 }
+      responses:
+        '200': { $ref: '#/components/responses/Image' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    delete:
+      tags: [图片]
+      summary: 删除图片
+      description: 元数据删除提交后返回, 文件由后台清理并重试失败项
+      responses:
+        '204': { description: 已删除 }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /images/{id}/thumbnail:
+    parameters:
+      - $ref: '#/components/parameters/ImageID'
+    get:
+      tags: [图片]
+      summary: 获取图库缩略图
+      description: JXR 返回 SDR JPEG, 其他位图返回 PNG, 最长边不超过 512 像素。SVG 返回受限的原始 SVG。文件缺失时返回 404
+      responses:
+        '200':
+          description: 图片缩略图
+          content:
+            image/jpeg:
+              schema: { type: string, format: binary }
+            image/png:
+              schema: { type: string, format: binary }
+            image/svg+xml:
+              schema: { type: string, format: binary }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /images/{id}/preview:
+    parameters:
+      - $ref: '#/components/parameters/ImageID'
+    get:
+      tags: [图片]
+      summary: 获取图片详情预览
+      description: JXR 返回 SDR JPEG, TIFF、HEIC、HEIF 和 JPEG XL 返回 PNG 预览, 其他格式返回浏览器可直接显示的原图
+      responses:
+        '200':
+          description: 图片预览
+          content:
+            'image/*':
+              schema: { type: string, format: binary }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /images/{id}/download:
+    parameters:
+      - $ref: '#/components/parameters/ImageID'
+    get:
+      tags: [图片]
+      summary: 下载图片
+      description: JXR 下载转换成功后的 HEIC, 其他格式下载原文件。支持 Range 请求, 下载文件名通过 Content-Disposition 返回
+      parameters:
+        - in: header
+          name: Range
+          schema: { type: string }
+          description: HTTP 字节范围
+      responses:
+        '200': { $ref: '#/components/responses/ImageDownload' }
+        '206': { $ref: '#/components/responses/ImageDownload' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '416': { description: 请求范围无效 }
+        '500': { $ref: '#/components/responses/InternalError' }
+components:
+  parameters:
+    AlbumID:
+      name: id
+      in: path
+      required: true
+      description: 相册 ID, 内置相册为 uncategorized
+      schema: { type: string }
+    ImageID:
+      name: id
+      in: path
+      required: true
+      description: 图片 ID
+      schema: { type: string }
+    ImageSearch:
+      name: search
+      in: query
+      description: 按文件名包含关系搜索, 对 Unicode 进行小写化, 去除首尾空白
+      schema: { type: string, maxLength: 512 }
+    ImagePageLimit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+    ImageCursor:
+      name: cursor
+      in: query
+      description: 上一页返回的 next_cursor
+      schema: { type: string }
+  schemas:
+    Album:
+      type: object
+      required: [id, name, description, created_at, updated_at]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        description: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    CreateAlbum:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 120, description: "去除首尾空白后校验, 不允许 NUL 字符, 名称可重复" }
+        description: { type: string, nullable: true, maxLength: 2000, default: '', description: 省略或传入 null 时为空字符串, 去除首尾空白后校验 }
+    UpdateAlbum:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        name: { type: string, minLength: 1, maxLength: 120, description: "去除首尾空白后校验, 不允许 NUL 字符" }
+        description: { type: string, maxLength: 2000, description: 去除首尾空白后校验 }
+    Image:
+      type: object
+      required: [id, album_id, original_name, source_media_type, created_at, updated_at]
+      properties:
+        id: { type: string }
+        album_id: { type: string }
+        original_name: { type: string }
+        source_media_type: { type: string, description: 根据源文件内容识别出的 MIME 类型, 例如 image/png 或 image/jxr }
+        heic_has_gain_map: { type: boolean, description: JXR 转换产物是否声明 ISO gain map。无法判断或源文件为其他格式时省略 }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    ImagePage:
+      type: object
+      required: [images, next_cursor, matched, total]
+      properties:
+        images:
+          type: array
+          items: { $ref: '#/components/schemas/Image' }
+        next_cursor: { type: string, nullable: true }
+        matched: { type: integer, description: 当前搜索匹配的图片数 }
+        total: { type: integer, description: 搜索前的图片总数 }
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error: { type: string }
+    UploadResult:
+      type: object
+      required: [images, errors]
+      properties:
+        images:
+          type: array
+          items: { $ref: '#/components/schemas/Image' }
+        errors:
+          type: array
+          items:
+            type: object
+            required: [name, error, status]
+            properties:
+              name: { type: string }
+              error: { type: string }
+              status: { type: integer }
+        error: { type: string, description: 整个请求中断时的错误 }
+  responses:
+    Album:
+      description: 相册对象
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Album' }
+    Image:
+      description: 图片对象
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Image' }
+    UploadResult:
+      description: 上传结果
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/UploadResult' }
+    UploadError:
+      description: 请求失败, 可能包含已保存的图片
+      content:
+        application/json:
+          schema:
+            anyOf:
+              - $ref: '#/components/schemas/Error'
+              - $ref: '#/components/schemas/UploadResult'
+    BadRequest:
+      description: 请求无效
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: 资源不存在
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Conflict:
+      description: 操作冲突
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    InternalError:
+      description: 服务器内部错误
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    ImageDownload:
+      description: 普通图片原文件或 JXR 转换生成的 HEIC
+      headers:
+        Content-Disposition:
+          description: 附件文件名
+          schema: { type: string }
+      content:
+        'image/*':
+          schema: { type: string, format: binary }

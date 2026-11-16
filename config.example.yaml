@@ -1,0 +1,17 @@
+server:
+  addr: "127.0.0.1:8080"
+
+storage:
+  data_dir: ./runtime
+
+upload:
+  max_file_bytes: 268435456      # 256 MiB
+  max_request_bytes: 1073741824  # 1 GiB, 包括 multipart 开销
+
+convert:
+  timeout: 30s
+
+tools:
+  jxr_dec: /opt/homebrew/opt/jxrlib/bin/JxrDecApp
+  magick: /opt/homebrew/opt/imagemagick-full/bin/magick
+  encoder: ./tools/toGainMapHDR/toGainMapHDR

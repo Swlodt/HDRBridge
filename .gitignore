@@ -1,0 +1,25 @@
+# 编辑器和操作系统文件
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+*.swp
+
+# 本地配置
+/config.yaml
+.env
+.env.*
+!.env.example
+*.local.yaml
+*.local.yml
+
+# 构建产物和依赖
+**/target/
+**/node_modules/
+**/dist/
+/bin/
+/tools/
+
+# 运行时状态不纳入版本控制
+/runtime/
+*.log
